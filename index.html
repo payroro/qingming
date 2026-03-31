@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>赛博烧纸模拟器 | Cyber Joss Paper</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #0a0a0c;
+            color: #00ffcc;
+            font-family: 'Courier New', Courier, monospace;
+            user-select: none;
+        }
+
+        /* 顶部统计面板 */
+        #stats-panel {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            padding: 15px 20px;
+            background: rgba(10, 10, 12, 0.8);
+            border: 1px solid #00ffcc;
+            box-shadow: 0 0 10px rgba(0, 255, 204, 0.3);
+            border-radius: 8px;
+            z-index: 10;
+        }
+        .stat-line { margin: 5px 0; font-size: 1.2rem; }
+        .stat-value { color: #ff0055; font-weight: bold; text-shadow: 0 0 5px #ff0055; }
+
+        /* 底部操作区 */
+        #controls {
+            position: absolute;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 15px;
+            z-index: 10;
+        }
+
+        button {
+            background: transparent;
+            color: #00ffcc;
+            border: 1px solid #00ffcc;
+            padding: 10px 20px;
+            font-size: 1rem;
+            cursor: pointer;
+            border-radius: 5px;
+            transition: all 0.2s;
+            font-family: inherit;
+            box-shadow: 0 0 5px rgba(0, 255, 204, 0.2);
+        }
+        button:hover {
+            background: #00ffcc;
+            color: #0a0a0c;
+            box-shadow: 0 0 15px #00ffcc;
+        }
+        button.reset-btn { border-color: #ff0055; color: #ff0055; box-shadow: 0 0 5px rgba(255, 0, 85, 0.2); }
+        button.reset-btn:hover { background: #ff0055; color: #fff; box-shadow: 0 0 15px #ff0055; }
+
+        /* 飘字动画效果 */
+        .floating-text {
+            position: absolute;
+            color: #ffaa00;
+            font-weight: bold;
+            font-size: 1.5rem;
+            pointer-events: none;
+            text-shadow: 0 0 8px #ffaa00;
+            animation: floatUp 1s ease-out forwards;
+            z-index: 20;
+        }
+
+        @keyframes floatUp {
+            0% { opacity: 1; transform: translateY(0) scale(1); }
+            100% { opacity: 0; transform: translateY(-50px) scale(1.2); }
+        }
+
+        canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: 1;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="stats-panel">
+        <div class="stat-line">累计功德: <span id="merit-score" class="stat-value">0</span></div>
+        <div class="stat-line">已汇出(亿): <span id="money-score" class="stat-value">0</span></div>
+    </div>
+
+    <div id="controls">
+        <button onclick="spawnItem('黄纸', 1, 0.01, '#ffcc00')">普通黄纸 (+1功德)</button>
+        <button onclick="spawnItem('金元宝', 10, 0.5, '#ffaa00')">金元宝 (+10功德)</button>
+        <button onclick="spawnItem('大钞', 100, 10, '#00ffcc')">天地大钞 (+100功德)</button>
+        <button class="reset-btn" onclick="resetStats()">重置数据</button>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        let width = canvas.width = window.innerWidth;
+        let height = canvas.height = window.innerHeight;
+
+        // 监听窗口大小变化
+        window.addEventListener('resize', () => {
+            width = canvas.width = window.innerWidth;
+            height = canvas.height = window.innerHeight;
+        });
+
+        // 状态数据
+        let totalMerit = 0;
+        let totalMoney = 0;
+
+        // 实体数组
+        let items = [];
+        let particles = [];
+
+        // 祭品类
+        class PaperItem {
+            constructor(name, merit, money, color) {
+                this.name = name;
+                this.merit = merit;
+                this.money = money;
+                this.color = color;
+                
+                // 初始位置在顶部中间随机范围
+                this.x = width / 2 + (Math.random() - 0.5) * 300;
+                this.y = -50;
+                
+                // 物理属性
+                this.vy = Math.random() * 2 + 2; // 下落速度
+                this.vx = (Math.random() - 0.5) * 2; // 左右飘动
+                this.angle = Math.random() * Math.PI * 2;
+                this.vAngle = (Math.random() - 0.5) * 0.1; // 旋转速度
+                
+                this.width = 60;
+                this.height = 40;
+                this.isBurned = false;
+            }
+
+            update() {
+                this.y += this.vy;
+                this.x += Math.sin(this.y * 0.05) * 1 + this.vx; // 模拟纸张飘落的S型轨迹
+                this.angle += this.vAngle;
+
+                // 碰到火盆区域 (屏幕底部 150px 处)
+                if (this.y > height - 150 && !this.isBurned) {
+                    this.burn();
+                }
+            }
+
+            draw() {
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                ctx.rotate(this.angle);
+                
+                // 绘制带发光边缘的矩形模拟祭品
+                ctx.fillStyle = 'rgba(20, 20, 20, 0.8)';
+                ctx.strokeStyle = this.color;
+                ctx.lineWidth = 2;
+                ctx.shadowColor = this.color;
+                ctx.shadowBlur = 10;
+                
+                ctx.fillRect(-this.width/2, -this.height/2, this.width, this.height);
+                ctx.strokeRect(-this.width/2, -this.height/2, this.width, this.height);
+                
+                // 绘制文字
+                ctx.fillStyle = this.color;
+                ctx.font = '14px Courier New';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.shadowBlur = 0;
+                ctx.fillText(this.name, 0, 0);
+                
+                ctx.restore();
+            }
+
+            burn() {
+                this.isBurned = true;
+                updateStats(this.merit, this.money);
+                createFloatingText(`功德 +${this.merit}`, this.x, this.y);
+                createExplosion(this.x, this.y, this.color);
+            }
+        }
+
+        // 火焰与灰烬粒子类
+        class Particle {
+            constructor(x, y, color, isFire = false) {
+                this.x = x;
+                this.y = y;
+                this.color = color;
+                this.isFire = isFire;
+                
+                this.vx = (Math.random() - 0.5) * 3;
+                this.vy = (Math.random() - 1) * 5 - 2; // 向上飘
+                this.life = 1.0;
+                this.decay = Math.random() * 0.02 + 0.01;
+                this.size = Math.random() * 5 + 2;
+            }
+
+            update() {
+                this.x += this.vx;
+                this.y += this.vy;
+                this.life -= this.decay;
+                if (this.isFire) {
+                    this.size *= 0.95; // 火焰粒子逐渐变小
+                }
+            }
+
+            draw() {
+                ctx.save();
+                ctx.globalAlpha = this.life;
+                ctx.fillStyle = this.color;
+                ctx.shadowColor = this.color;
+                ctx.shadowBlur = 10;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+        }
+
+        // 生成祭品
+        window.spawnItem = function(name, merit, money, color) {
+            items.push(new PaperItem(name, merit, money, color));
+        };
+
+        // 生成燃烧爆发粒子
+        function createExplosion(x, y, color) {
+            for (let i = 0; i < 20; i++) {
+                particles.push(new Particle(x, y, color, false)); // 祭品颜色的灰烬
+                particles.push(new Particle(x, y, '#ff5500', true)); // 橙色火焰
+            }
+        }
+
+        // 底部常驻火焰效果
+        function spawnBaseFire() {
+            if (Math.random() < 0.5) {
+                let x = width / 2 + (Math.random() - 0.5) * 400;
+                let y = height - 50 + Math.random() * 50;
+                particles.push(new Particle(x, y, '#ff3300', true));
+                if(Math.random() < 0.3) particles.push(new Particle(x, y, '#ffaa00', true));
+            }
+        }
+
+        // 创建DOM飘字动画
+        function createFloatingText(text, x, y) {
+            const el = document.createElement('div');
+            el.className = 'floating-text';
+            el.innerText = text;
+            el.style.left = x + 'px';
+            el.style.top = y + 'px';
+            document.body.appendChild(el);
+            
+            // 动画结束后移除DOM
+            setTimeout(() => {
+                el.remove();
+            }, 1000);
+        }
+
+        // 更新面板数据
+        function updateStats(meritAdded, moneyAdded) {
+            totalMerit += meritAdded;
+            totalMoney += moneyAdded;
+            // 解决浮点数精度问题
+            totalMoney = Math.round(totalMoney * 100) / 100;
+            
+            document.getElementById('merit-score').innerText = totalMerit;
+            document.getElementById('money-score').innerText = totalMoney;
+        }
+
+        // 重置数据
+        window.resetStats = function() {
+            totalMerit = 0;
+            totalMoney = 0;
+            document.getElementById('merit-score').innerText = totalMerit;
+            document.getElementById('money-score').innerText = totalMoney;
+            items = []; // 清空屏幕上的祭品
+        };
+
+        // 主渲染循环
+        function animate() {
+            // 拖影效果 (清空画布时带有一定透明度)
+            ctx.fillStyle = 'rgba(10, 10, 12, 0.3)';
+            ctx.fillRect(0, 0, width, height);
+
+            spawnBaseFire();
+
+            // 更新和绘制粒子
+            for (let i = particles.length - 1; i >= 0; i--) {
+                let p = particles[i];
+                p.update();
+                p.draw();
+                if (p.life <= 0) {
+                    particles.splice(i, 1);
+                }
+            }
+
+            // 更新和绘制祭品
+            for (let i = items.length - 1; i >= 0; i--) {
+                let item = items[i];
+                item.update();
+                item.draw();
+                if (item.isBurned) {
+                    items.splice(i, 1);
+                }
+            }
+
+            requestAnimationFrame(animate);
+        }
+
+        // 启动循环
+        animate();
+    </script>
+</body>
+</html>
